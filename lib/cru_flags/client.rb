@@ -73,6 +73,7 @@ module CruFlags
       @ready_mutex.synchronize do
         deadline = timeout && Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
         until @attempted
+          ensure_started # self-heals a poller that died mid-wait, rather than waiting on it forever
           remaining = deadline && deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
           return false if remaining && remaining <= 0
           @ready_cv.wait(@ready_mutex, remaining || 1.0)
@@ -107,7 +108,11 @@ module CruFlags
       @closed = true
       @wake.push(:stop)
       @ready_mutex.synchronize { @ready_cv.broadcast }
-      @thread&.join(0.1)
+      begin
+        @thread&.join(0.1)
+      rescue
+        nil # close called from the poller thread itself must not raise ThreadError
+      end
       nil
     end
 
@@ -155,7 +160,7 @@ module CruFlags
       begin
         attempt_fetch_coalesced(force: false)
       ensure
-        signal_ready
+        signal_ready # deliberate: kept for symmetry with the background poller's signal, even though on-demand's own ready() never waits on this CV
       end
     end
 
@@ -274,9 +279,9 @@ module CruFlags
         logger = defined?(Rails) && Rails.respond_to?(:logger) && Rails.logger ||
           (@fallback_logger ||= Logger.new($stderr, progname: "cru_flags"))
         if error
-          logger.warn("cru_flags: flag fetches failing: #{error.class}: #{error.message}")
+          logger.warn("flag fetches failing: #{error.class}: #{error.message}")
         else
-          logger.warn("cru_flags: flag fetches recovered")
+          logger.warn("flag fetches recovered")
         end
       end
     end
@@ -287,11 +292,13 @@ module CruFlags
 
     def validate_url!
       return if @url.nil?
-      scheme = URI(@url.to_s).scheme
-      unless VALID_SCHEMES.include?(scheme)
+      uri = URI(@url.to_s)
+      invalid_scheme = !VALID_SCHEMES.include?(uri.scheme)
+      no_host = uri.host.to_s.empty?
+      if invalid_scheme || no_host
+        reason = invalid_scheme ? "scheme #{uri.scheme.inspect} is not http(s)" : "has no host"
         @url = nil
-        report(FetchError.new("CRU_FLAGS_URL scheme #{scheme.inspect} is not http(s); client is inert",
-          code: :network))
+        report(FetchError.new("CRU_FLAGS_URL #{reason}; client is inert", code: :network))
       end
     rescue URI::InvalidURIError
       @url = nil

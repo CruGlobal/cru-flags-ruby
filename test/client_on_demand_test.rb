@@ -35,7 +35,8 @@ class ClientOnDemandTest < Minitest::Test
 
   def test_staleness_anchors_on_attempt_while_service_down
     @service.respond_with(status: 500, body: "x")
-    client = new_client
+    # on_error: swallow — see the matching comment in client_background_test.rb.
+    client = new_client(on_error: ->(_e) {})
     20.times { client.enabled?("pilot") }
     assert_operator @service.requests.size, :<=, 2,
       "a dead service costs one failed request per interval, not one per read"

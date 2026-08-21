@@ -31,7 +31,11 @@ class ClientBackgroundTest < Minitest::Test
 
   def test_ready_true_after_failed_first_attempt
     @service.respond_with(status: 500, body: "x")
-    client = new_client
+    # on_error: swallow — this test deliberately triggers a failure, and the
+    # default on_error would otherwise log it (test_helper's warning-free
+    # gate is about Ruby Warning.warn, not stderr logging, but there is no
+    # reason for this test to exercise the default logger at all).
+    client = new_client(on_error: ->(_e) {})
     assert client.ready(timeout: 2.0), "a completed failed attempt is still completed"
     refute client.enabled?("pilot")
   end

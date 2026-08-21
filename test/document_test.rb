@@ -24,6 +24,11 @@ class DocumentTest < Minitest::Test
     assert_equal({}, CruFlags::Document.parse('{"Flags": null}')["Flags"])
   end
 
+  def test_empty_constant_is_deep_frozen
+    assert_predicate CruFlags::Document::EMPTY, :frozen?
+    assert_predicate CruFlags::Document::EMPTY["Flags"], :frozen?
+  end
+
   def test_wrong_type_flags_fails_the_document
     ["[]", '"x"', "3"].each do |bad|
       assert_raises(CruFlags::ParseError) { CruFlags::Document.parse(%({"Flags": #{bad}})) }

@@ -4,7 +4,7 @@ require "json"
 
 module CruFlags
   module Document
-    EMPTY = {"Flags" => {}}.freeze
+    EMPTY = {"Flags" => {}.freeze}.freeze
 
     module_function
 

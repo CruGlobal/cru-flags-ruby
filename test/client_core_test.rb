@@ -78,6 +78,16 @@ class ClientCoreTest < Minitest::Test
       "404 must clear the stored ETag so a reappearing document is fetched fresh"
   end
 
+  def test_flags_for_adapter_after_404_is_frozen
+    serve('{"Flags":{"pilot":{"Enabled":true}}}', etag: '"1"')
+    @client.refresh(force: true)
+    @service.respond_with(status: 404)
+    @client.refresh(force: true)
+    flags = @client.flags_for_adapter
+    assert_empty flags
+    assert_raises(FrozenError) { flags["pilot"] = {"Enabled" => true} }
+  end
+
   def test_snapshot_is_a_thawed_json_roundtrippable_copy
     serve('{"Version":3,"Flags":{"pilot":{"Enabled":true}}}')
     @client.refresh(force: true)
@@ -112,10 +122,39 @@ class ClientCoreTest < Minitest::Test
     assert_equal 1, @errors.size
   end
 
+  def test_no_host_url_is_inert_with_one_warning
+    client = CruFlags::Client.new(url: "http:///flags", on_error: ->(e) { @errors << e })
+    assert client.inert?
+    refute client.enabled?("x")
+    client.close
+    assert_equal 1, @errors.size
+  end
+
+  def test_junk_poll_seconds_and_fetch_timeout_fall_back_to_defaults
+    # positive() is a private constructor-time validator (design doc §1: an
+    # application must still boot on misconfiguration, so junk numeric
+    # options fall back silently rather than raising). It has no externally
+    # observable effect beyond which value gets stored, so reading the ivars
+    # directly is the simplest faithful way to pin it.
+    [0, -1, "x", Float::INFINITY].each do |junk|
+      client = CruFlags::Client.new(url: @service.url, poll_seconds: junk, fetch_timeout: junk)
+      assert_equal 30.0, client.instance_variable_get(:@poll_seconds), "poll_seconds=#{junk.inspect}"
+      assert_equal 2.0, client.instance_variable_get(:@fetch_timeout), "fetch_timeout=#{junk.inspect}"
+      client.close
+    end
+  end
+
+  def test_valid_poll_seconds_and_fetch_timeout_are_used
+    client = CruFlags::Client.new(url: @service.url, poll_seconds: 5.0, fetch_timeout: 1.5)
+    assert_equal 5.0, client.instance_variable_get(:@poll_seconds)
+    assert_equal 1.5, client.instance_variable_get(:@fetch_timeout)
+    client.close
+  end
+
   def test_broken_on_error_handler_is_swallowed
     client = CruFlags::Client.new(url: @service.url, on_error: ->(_e) { raise "handler bug" })
     @service.respond_with(status: 500, body: "x")
-    client.refresh(force: true) # must not raise
+    refute client.refresh(force: true) # must not raise, and must report the failed fetch
     client.close
   end
 end

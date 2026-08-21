@@ -43,6 +43,14 @@ class FlipperAdapterTest < Minitest::Test
     assert_equal true, gates[:boolean]
   end
 
+  def test_get_multi_returns_correct_gate_hashes_including_an_absent_feature
+    features = [@flipper.feature(:pilot), @flipper.feature(:dark), @flipper.feature(:absent)]
+    result = @adapter.get_multi(features)
+    assert_equal true, result["pilot"][:boolean]
+    assert_nil result["dark"][:boolean]
+    assert_nil result["absent"][:boolean]
+  end
+
   def test_writes_raise_read_only_error
     feature = @flipper.feature(:pilot)
     assert_raises(CruFlags::ReadOnlyError) { @flipper.enable(:new_flag) }

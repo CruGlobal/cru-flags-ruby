@@ -103,4 +103,28 @@ class FetcherTest < Minitest::Test
     assert_equal :failed, outcome.kind
     assert_equal :network, outcome.error.code
   end
+
+  def test_redirect_to_non_http_scheme_is_failed
+    @service.respond { |_req| [302, {"Location" => "ftp://example.com/flags"}, nil] }
+    outcome = fetch
+    assert_equal :failed, outcome.kind
+    assert_equal :network, outcome.error.code
+  end
+
+  def test_redirect_to_hostless_url_is_failed
+    @service.respond { |_req| [302, {"Location" => "http:///flags"}, nil] }
+    outcome = fetch
+    assert_equal :failed, outcome.kind
+    assert_equal :network, outcome.error.code
+  end
+
+  def test_oversized_body_is_failed
+    # A valid-JSON body that merely exceeds MAX_BODY_BYTES: proves the size
+    # cap itself trips the failure, not a coincidental parse error.
+    huge = '{"Flags":{}}' + (" " * (CruFlags::Fetcher::MAX_BODY_BYTES + 1))
+    @service.respond_with(status: 200, body: huge)
+    outcome = fetch
+    assert_equal :failed, outcome.kind
+    assert_equal :parse, outcome.error.code
+  end
 end

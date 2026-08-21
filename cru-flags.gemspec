@@ -23,4 +23,9 @@ Gem::Specification.new do |spec|
 
   # The ONE runtime dependency, and only for the adapter + Railtie (design doc §10).
   spec.add_dependency "flipper", "~> 1.4"
+
+  # json >= 2.4 is the first release whose JSON.parse honors freeze: true;
+  # older json versions silently ignore it, which would quietly unfreeze the
+  # snapshot the whole read path depends on being immutable (design doc §6).
+  spec.add_dependency "json", ">= 2.4"
 end
