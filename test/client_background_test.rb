@@ -96,6 +96,13 @@ class ClientBackgroundTest < Minitest::Test
       "an already-closed client must not sit out a wait poll"
   end
 
+  def test_ready_stays_true_after_close_once_completed
+    client = new_client
+    assert client.ready(timeout: 2.0)
+    client.close
+    assert client.ready(timeout: 2.0), "closing after completion must not retroactively flip ready"
+  end
+
   def test_concurrent_refresh_calls_share_one_request
     client = new_client
     client.ready(timeout: 2.0)

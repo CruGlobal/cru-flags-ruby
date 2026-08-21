@@ -56,7 +56,7 @@ module CruFlags
     # returns whether it did within timeout. Immediately false for inert
     # clients (design doc §3.3, §7).
     def ready(timeout: nil)
-      return false if inert? || @closed
+      return false if inert? || (@closed && !@attempted)
       ensure_started
       return on_demand_ready if on_demand? # Task 7
       @ready_mutex.synchronize do
@@ -76,16 +76,18 @@ module CruFlags
     def refresh(force: false)
       return false if inert? || @closed
       waited_from = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      fresh = @fetch_mutex.synchronize do
-        if force
-          attempt_fetch unless @last_attempt_at && @last_attempt_at >= waited_from
-        elsif stale?
-          attempt_fetch
+      begin
+        @fetch_mutex.synchronize do
+          if force
+            attempt_fetch unless @last_attempt_at && @last_attempt_at >= waited_from
+          elsif stale?
+            attempt_fetch
+          end
         end
-        @attempted && @last_attempt_ok
+      ensure
+        signal_ready
       end
-      signal_ready
-      fresh
+      @attempted && @last_attempt_ok
     rescue
       false
     end
@@ -137,9 +139,10 @@ module CruFlags
         until @closed
           begin
             attempt_fetch_coalesced(force: true)
-            signal_ready
           rescue
             nil # a bug here must not silently kill the poller (design doc §7)
+          ensure
+            signal_ready
           end
           begin
             @wake.pop(timeout: @poll_seconds * rand(0.8..1.2))
