@@ -7,7 +7,7 @@ require "json"
 
 # Concurrency guarantees that only surface under real contention: readers
 # racing a fast-swapping poller must never observe a half-applied document
-# (design doc §8 — documents are deep-frozen and swapped by single reference
+# (design doc §6 — documents are deep-frozen and swapped by single reference
 # assignment, never mutated in place), and the poller's jitter must actually
 # land in its documented band (design doc §7).
 class ConcurrencyTest < Minitest::Test
