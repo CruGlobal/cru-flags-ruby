@@ -32,4 +32,28 @@ class FlagServiceTest < Minitest::Test
     res = Net::HTTP.start(uri.host, uri.port) { |h| h.get(uri.path) }
     assert_equal "304", res.code
   end
+
+  def test_ioerror_from_one_connection_does_not_kill_the_accept_loop
+    attempts = 0
+    @service.respond do |_req|
+      attempts += 1
+      raise IOError, "simulated per-connection failure" if attempts == 1
+      [200, {}, "ok"]
+    end
+    uri = URI(@service.url)
+
+    # Disable Net::HTTP's own idempotent-request retry (default: 1) so the
+    # first connection's failure surfaces here instead of being silently
+    # retried by the client. Bound both attempts so a regression (the accept
+    # loop dying) fails fast instead of hanging on a dead listener.
+    assert_raises(StandardError) do
+      Net::HTTP.start(uri.host, uri.port, open_timeout: 2, read_timeout: 2) do |h|
+        h.max_retries = 0
+        h.get(uri.path)
+      end
+    end
+
+    res = Net::HTTP.start(uri.host, uri.port, open_timeout: 2, read_timeout: 2) { |h| h.get(uri.path) }
+    assert_equal "200", res.code
+  end
 end

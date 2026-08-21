@@ -45,10 +45,12 @@ class FlagService
 
   def accept_loop
     loop do
-      socket = @server.accept
+      begin
+        socket = @server.accept
+      rescue IOError, Errno::EBADF
+        break # listener closed by #stop
+      end
       handle(socket)
-    rescue IOError, Errno::EBADF
-      break # listener closed by #stop
     rescue
       next # one bad connection must not stop the server
     end
