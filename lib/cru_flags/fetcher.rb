@@ -34,7 +34,14 @@ module CruFlags
       failed(FetchError.new(e.message, code: :parse))
     rescue Timeout::Error => e
       failed(FetchError.new("flag fetch timed out: #{e.message}", code: :timeout))
-    rescue SystemCallError, SocketError, IOError, OpenSSL::SSL::SSLError => e
+    rescue SystemCallError, SocketError, IOError, OpenSSL::SSL::SSLError,
+      URI::Error, Net::HTTPBadResponse, Net::HTTPHeaderSyntaxError => e
+      failed(FetchError.new("flag fetch failed: #{e.message}", code: :network))
+    rescue => e
+      # Floor, not enumeration: "call never raises" must hold by construction.
+      # Mirrors the sibling clients' contract (node's toFlagsError) — any
+      # exception type we didn't anticipate still normalizes to :network
+      # rather than escaping as a raise.
       failed(FetchError.new("flag fetch failed: #{e.message}", code: :network))
     end
 

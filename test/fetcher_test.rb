@@ -96,4 +96,11 @@ class FetcherTest < Minitest::Test
     assert_equal :failed, outcome.kind
     assert_equal :http, outcome.error.code
   end
+
+  def test_malformed_redirect_location_is_failed_not_raised
+    @service.respond { |_req| [302, {"Location" => "/bad path with spaces"}, nil] }
+    outcome = fetch
+    assert_equal :failed, outcome.kind
+    assert_equal :network, outcome.error.code
+  end
 end
