@@ -38,8 +38,7 @@ module CruFlags
     def inert? = @url.nil?
 
     def enabled?(name)
-      ensure_started
-      refresh_on_demand
+      read_path_touch
       doc = @document
       doc&.dig("Flags", name.to_s, "Enabled") == true
     rescue
@@ -47,10 +46,19 @@ module CruFlags
     end
 
     def snapshot
-      ensure_started
-      refresh_on_demand
+      read_path_touch
       doc = @document
       doc ? JSON.parse(JSON.generate(doc)) : {}
+    rescue
+      {}
+    end
+
+    # The Flipper adapter's read primitive: the frozen Flags hash (or {}),
+    # through the same read path as enabled? (lazy start / on-demand
+    # refresh).
+    def flags_for_adapter
+      read_path_touch
+      @document&.fetch("Flags", nil) || {}
     rescue
       {}
     end
@@ -104,6 +112,14 @@ module CruFlags
     end
 
     private
+
+    # The pre-read hook shared by enabled?/snapshot/flags_for_adapter: lazily
+    # arms the background poller (a no-op once running) and, in on-demand
+    # mode, performs the coalesced fetch before the read.
+    def read_path_touch
+      ensure_started
+      refresh_on_demand
+    end
 
     # refresh_mode resolution (design doc §7.1, §7.2): constructor argument
     # wins over ENV["CRU_FLAGS_REFRESH_MODE"], which wins over the

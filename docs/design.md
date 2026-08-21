@@ -42,7 +42,7 @@ underneath it. What it replaces, and why, is §4.
   requests (§7.1) — included for contract parity with the siblings.
 - **Fail-static** semantics: a flag lookup never raises, never blocks (in
   background mode), and never changes answer because the network broke.
-- A read-only `Flipper::Adapters::CruFlags` over the snapshot, plus a Railtie
+- A read-only `CruFlags::FlipperAdapter` over the snapshot, plus a Railtie
   that wires it into Flipper with zero app code.
 - Stdlib-only client core (`net/http`, `json`, `thread`); Ruby >= 3.2.
 
@@ -265,7 +265,7 @@ verified live in the recon):
 
 ## 5. The Flipper adapter
 
-`Flipper::Adapters::CruFlags` — a read-only adapter over the client's frozen
+`CruFlags::FlipperAdapter` — a read-only adapter over the client's frozen
 snapshot, so every existing `Flipper.enabled?(:name)` call site works
 unchanged.
 

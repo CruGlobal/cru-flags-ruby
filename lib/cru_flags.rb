@@ -13,6 +13,8 @@ module CruFlags
 
   @client_mutex = Mutex.new
   @client = nil
+  @flipper_adapter_mutex = Mutex.new
+  @flipper_adapter = nil
 
   class << self
     def client
@@ -29,6 +31,18 @@ module CruFlags
 
     def close = client.close
 
+    # The read-only Flipper adapter (design doc §5), memoized and bound to
+    # the singleton client. `flipper` is required lazily here (not at the
+    # top of this file) so requiring "cru_flags" alone stays flipper-free.
+    def flipper_adapter
+      @flipper_adapter || @flipper_adapter_mutex.synchronize do
+        @flipper_adapter ||= begin
+          require_relative "cru_flags/flipper_adapter"
+          FlipperAdapter.new(client)
+        end
+      end
+    end
+
     # Test hook, not public API: closes and discards the singleton so the
     # next call re-reads the environment.
     def reset!
@@ -36,6 +50,7 @@ module CruFlags
         @client&.close
         @client = nil
       end
+      @flipper_adapter_mutex.synchronize { @flipper_adapter = nil }
     end
 
     private
