@@ -74,6 +74,28 @@ class ClientBackgroundTest < Minitest::Test
     assert_equal count, @service.requests.size, "no fetches after close"
   end
 
+  def test_dead_poller_self_heals_on_next_read
+    client = new_client
+    client.ready(timeout: 2.0)
+    dead_thread = client.instance_variable_get(:@thread)
+    dead_thread.kill
+    dead_thread.join(2)
+    refute dead_thread.alive?, "precondition: the poller must actually be dead"
+    assert client.enabled?("pilot"), "cached snapshot must still read fine through a dead poller"
+    new_thread = client.instance_variable_get(:@thread)
+    refute_same dead_thread, new_thread, "a read after a dead poller must respawn a new one"
+    assert new_thread.alive?
+  end
+
+  def test_ready_returns_immediately_when_already_closed
+    client = new_client
+    client.close
+    start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    refute client.ready(timeout: 5.0)
+    assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - start, :<, 0.2,
+      "an already-closed client must not sit out a wait poll"
+  end
+
   def test_concurrent_refresh_calls_share_one_request
     client = new_client
     client.ready(timeout: 2.0)

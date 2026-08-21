@@ -56,7 +56,7 @@ module CruFlags
     # returns whether it did within timeout. Immediately false for inert
     # clients (design doc §3.3, §7).
     def ready(timeout: nil)
-      return false if inert?
+      return false if inert? || @closed
       ensure_started
       return on_demand_ready if on_demand? # Task 7
       @ready_mutex.synchronize do
@@ -76,7 +76,7 @@ module CruFlags
     def refresh(force: false)
       return false if inert? || @closed
       waited_from = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      @fetch_mutex.synchronize do
+      fresh = @fetch_mutex.synchronize do
         if force
           attempt_fetch unless @last_attempt_at && @last_attempt_at >= waited_from
         elsif stale?
@@ -84,6 +84,8 @@ module CruFlags
         end
         @attempted && @last_attempt_ok
       end
+      signal_ready
+      fresh
     rescue
       false
     end
@@ -105,19 +107,25 @@ module CruFlags
     end
 
     # Lazily arms the background poller on the first enabled?/ready/snapshot
-    # call. A no-op for inert, closed, or on-demand clients. Fork-safe: a PID
-    # change discards the dead parent thread's state so the child re-arms its
-    # own poller on its own next read (design doc §7).
+    # call. A no-op for inert, closed, or on-demand clients. Self-healing: a
+    # dead poller (killed by an unanticipated bug) is detected via
+    # Thread#alive? and respawned rather than leaving flags frozen forever.
+    # Fork-safe: a PID change discards the dead parent thread's state
+    # (including the ready CV, whose wait queue may reference parent
+    # threads) so the child re-arms its own poller on its own next read
+    # (design doc §7).
     def ensure_started
       return if inert? || @closed || on_demand?
-      return if @thread && Process.pid == @pid
+      return if @thread&.alive? && Process.pid == @pid
       @write_mutex.synchronize do
         return if @closed
         if @thread && Process.pid != @pid
           @thread = nil
           @wake = Queue.new
+          @ready_mutex = Mutex.new
+          @ready_cv = ConditionVariable.new
         end
-        spawn_poller unless @thread
+        spawn_poller unless @thread&.alive?
       end
     end
 
@@ -127,12 +135,18 @@ module CruFlags
         Thread.current.name = "cru-flags-poller"
         Thread.current.report_on_exception = false
         until @closed
-          attempt_fetch_coalesced(force: true)
-          signal_ready
+          begin
+            attempt_fetch_coalesced(force: true)
+            signal_ready
+          rescue
+            nil # a bug here must not silently kill the poller (design doc §7)
+          end
           begin
             @wake.pop(timeout: @poll_seconds * rand(0.8..1.2))
           rescue
-            nil
+            # Non-spinning: a broken wake queue must not turn into a busy
+            # loop hammering the flag service.
+            sleep(@poll_seconds)
           end
         end
       end
