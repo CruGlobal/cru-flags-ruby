@@ -8,8 +8,11 @@ require "json"
 # Concurrency guarantees that only surface under real contention: readers
 # racing a fast-swapping poller must never observe a half-applied document
 # (design doc §6 — documents are deep-frozen and swapped by single reference
-# assignment, never mutated in place), and the poller's jitter must actually
-# land in its documented band (design doc §7).
+# assignment, never mutated in place). Plus two jitter checks (design doc
+# §7's ±20% de-phasing band): an honestly-labeled Ruby-RNG sanity bound, and
+# a source-derived pin on the poller's actual jitter formula (the sanity
+# bound alone never calls into the client, so it can't fail if the formula
+# is edited or removed).
 class ConcurrencyTest < Minitest::Test
   def test_readers_never_see_a_half_applied_swap
     service = FlagService.new.start
@@ -43,10 +46,29 @@ class ConcurrencyTest < Minitest::Test
     service&.stop
   end
 
-  def test_jitter_distribution_stays_in_band
+  # Honestly labeled: this is a sanity check on Kernel#rand(Range)'s own
+  # documented float-range semantics, NOT a test of the poller. It never
+  # touches CruFlags::Client, so editing or deleting spawn_poller's jitter
+  # formula cannot make this fail — see
+  # test_poller_jitter_formula_is_pinned_at_its_call_site below for the test
+  # that actually pins the poller's behavior.
+  def test_ruby_rand_float_range_stays_in_band_sanity_check
     samples = 10_000.times.map { rand(0.8..1.2) }
     assert_operator samples.min, :>=, 0.8
     assert_operator samples.max, :<=, 1.2
     assert_in_delta 1.0, samples.sum / samples.size, 0.01
+  end
+
+  # A source-derived pin (the style the sibling clients use against
+  # vocabulary drift): reads the client's own source and asserts its jitter
+  # expression is still exactly `@poll_seconds * rand(0.8..1.2)` at its one
+  # call site (design doc §7's ±20% de-phasing band against a thundering
+  # herd). Brittle by design — a formula edit here MUST break this test,
+  # which the sanity check above cannot do since it never calls into the
+  # client at all.
+  def test_poller_jitter_formula_is_pinned_at_its_call_site
+    source = File.read(File.expand_path("../lib/cru_flags/client.rb", __dir__))
+    assert_match(/@poll_seconds\s*\*\s*rand\(0\.8\.\.1\.2\)/, source,
+      "the poller's jitter formula (poll_seconds * rand(0.8..1.2)) must not drift silently")
   end
 end
