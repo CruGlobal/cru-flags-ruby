@@ -9,13 +9,14 @@ module CruFlags
   # normal use, via the CruFlags module singleton.
   class Client
     VALID_SCHEMES = %w[http https].freeze
+    MODES = %w[background on-demand].freeze
 
     def initialize(url: nil, poll_seconds: 30.0, fetch_timeout: 2.0,
       on_error: nil, refresh_mode: nil)
       @poll_seconds = positive(poll_seconds, 30.0)
       @fetch_timeout = positive(fetch_timeout, 2.0)
       @on_error = on_error || default_on_error
-      @refresh_mode = refresh_mode # resolved in Task 7
+      @refresh_mode = resolve_mode(refresh_mode)
       @url = url
       @document = nil
       @etag = nil
@@ -38,6 +39,7 @@ module CruFlags
 
     def enabled?(name)
       ensure_started
+      refresh_on_demand
       doc = @document
       doc&.dig("Flags", name.to_s, "Enabled") == true
     rescue
@@ -46,6 +48,7 @@ module CruFlags
 
     def snapshot
       ensure_started
+      refresh_on_demand
       doc = @document
       doc ? JSON.parse(JSON.generate(doc)) : {}
     rescue
@@ -58,7 +61,7 @@ module CruFlags
     def ready(timeout: nil)
       return false if inert? || (@closed && !@attempted)
       ensure_started
-      return on_demand_ready if on_demand? # Task 7
+      return on_demand_ready if on_demand?
       @ready_mutex.synchronize do
         deadline = timeout && Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
         until @attempted
@@ -102,10 +105,51 @@ module CruFlags
 
     private
 
-    # Task 7 introduces refresh_mode resolution; on-demand mode has no
-    # poller thread at all (design doc §7.1).
+    # refresh_mode resolution (design doc §7.1, §7.2): constructor argument
+    # wins over ENV["CRU_FLAGS_REFRESH_MODE"], which wins over the
+    # "background" default. An unrecognized constructor value is a caller
+    # typo -> ArgumentError. An unrecognized ENV value is misconfiguration
+    # that must never stop boot -> one on_error warning, then background.
+    # @on_error is already assigned by the time this runs, so the warning
+    # can be reported inline.
+    def resolve_mode(arg)
+      if arg
+        raise ArgumentError, "refresh_mode must be one of #{MODES.join(", ")}" unless MODES.include?(arg)
+        return arg
+      end
+      env = ENV["CRU_FLAGS_REFRESH_MODE"].to_s.strip
+      return "background" if env.empty?
+      return env if MODES.include?(env)
+      report(FetchError.new("CRU_FLAGS_REFRESH_MODE=#{env.inspect} is not recognized; using background",
+        code: :network))
+      "background"
+    end
+
+    # On-demand mode has no poller thread at all (design doc §7.1).
     def on_demand?
-      false
+      @refresh_mode == "on-demand"
+    end
+
+    # The on-demand read-path hook: every enabled?/snapshot/ready call
+    # attempts a coalesced, attempt-anchored fetch before reading. A no-op
+    # in background mode, for inert clients, and once closed.
+    def refresh_on_demand
+      return unless on_demand?
+      return if inert? || @closed
+      begin
+        attempt_fetch_coalesced(force: false)
+      ensure
+        signal_ready
+      end
+    end
+
+    # ready in on-demand mode performs the read-path refresh itself rather
+    # than waiting on the ready CV (there is no poller to signal it); the
+    # timeout: argument is unused there, bounded instead by the fetch
+    # timeouts (design doc §3.3, §7.1).
+    def on_demand_ready
+      refresh_on_demand
+      @attempted
     end
 
     # Lazily arms the background poller on the first enabled?/ready/snapshot
