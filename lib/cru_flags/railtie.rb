@@ -1,5 +1,17 @@
 # frozen_string_literal: true
 
+# Loaded at file scope, not inside the initializer: Rails::Application
+# computes its initializer collection ONCE, by walking Rails::Railtie's
+# currently-defined subclasses, before running any of them. If "flipper"
+# were required for the first time from inside our own initializer's body,
+# Flipper::Engine would not exist yet when that walk happens, so its own
+# initializers (Strict wrapping, ActorLimit, the Memoizer middleware) would
+# never join the collection at all — not run late, just silently absent.
+# This file only loads under Rails (see the guarded require in
+# lib/cru_flags.rb), so requiring "flipper" here does not touch the
+# no-bundler / non-Rails path.
+require "flipper"
+
 module CruFlags
   # Zero-config Rails wiring (design doc §5.1). Registration is ordering-safe
   # because Flipper's engine resolves config.adapter LAZILY on first
@@ -18,7 +30,6 @@ module CruFlags
     end
 
     initializer "cru_flags.flipper" do |app|
-      require "flipper"
       Flipper.configure { |config| config.adapter { CruFlags.flipper_adapter } }
 
       if app.config.respond_to?(:flipper) &&
