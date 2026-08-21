@@ -1,0 +1,87 @@
+# frozen_string_literal: true
+
+require_relative "test_helper"
+require_relative "support/flag_service"
+require "cru_flags"
+
+class ClientBackgroundTest < Minitest::Test
+  def setup
+    @service = FlagService.new.start
+    @service.respond_with(status: 200, body: '{"Flags":{"pilot":{"Enabled":true}}}', headers: {"ETag" => '"1"'})
+  end
+
+  def teardown
+    @client&.close
+    @service.stop
+  end
+
+  def new_client(**opts)
+    @client = CruFlags::Client.new(url: @service.url, poll_seconds: 0.2, **opts)
+  end
+
+  def test_constructing_starts_no_thread_first_read_does
+    before = Thread.list.size
+    client = new_client
+    assert_equal before, Thread.list.size
+    client.enabled?("pilot")
+    assert client.ready(timeout: 2.0)
+    assert client.enabled?("pilot")
+    assert(Thread.list.any? { |t| t.name == "cru-flags-poller" })
+  end
+
+  def test_ready_true_after_failed_first_attempt
+    @service.respond_with(status: 500, body: "x")
+    client = new_client
+    assert client.ready(timeout: 2.0), "a completed failed attempt is still completed"
+    refute client.enabled?("pilot")
+  end
+
+  def test_ready_false_immediately_when_inert
+    client = CruFlags::Client.new(url: nil)
+    start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    refute client.ready(timeout: 5.0)
+    assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - start, :<, 1.0
+  end
+
+  def test_poller_revalidates_with_etag_on_steady_state
+    client = new_client
+    client.ready(timeout: 2.0)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 3.0
+    sleep 0.05 until @service.requests.size >= 3 || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+    assert_operator @service.requests.size, :>=, 3, "poller should tick repeatedly"
+    assert_equal '"1"', @service.requests.last.headers["if-none-match"]
+  end
+
+  def test_picks_up_flag_changes_within_interval
+    client = new_client
+    client.ready(timeout: 2.0)
+    assert client.enabled?("pilot")
+    @service.respond_with(status: 200, body: '{"Flags":{"pilot":{"Enabled":false}}}', headers: {"ETag" => '"2"'})
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 3.0
+    sleep 0.05 while client.enabled?("pilot") && Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
+    refute client.enabled?("pilot")
+  end
+
+  def test_close_returns_promptly_and_stops_polling
+    client = new_client
+    client.ready(timeout: 2.0)
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    client.close
+    assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :<, 0.15,
+      "close must interrupt the poll sleep, not wait it out"
+    count = @service.requests.size
+    sleep 0.5
+    assert_equal count, @service.requests.size, "no fetches after close"
+  end
+
+  def test_concurrent_refresh_calls_share_one_request
+    client = new_client
+    client.ready(timeout: 2.0)
+    baseline = @service.requests.size
+    @service.delay = 0.2
+    threads = 5.times.map { Thread.new { client.refresh(force: true) } }
+    threads.each(&:join)
+    assert_operator @service.requests.size - baseline, :<=, 2,
+      "a burst of refreshes must coalesce, not stack N requests"
+  end
+end

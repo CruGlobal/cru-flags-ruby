@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
+require "json"
 require "logger"
+require "uri"
 
 module CruFlags
   # The polling flag client (design doc §3–§8). One instance per process in
@@ -23,12 +25,19 @@ module CruFlags
       @last_attempt_ok = false
       @closed = false
       @write_mutex = Mutex.new
+      @fetch_mutex = Mutex.new
+      @ready_mutex = Mutex.new
+      @ready_cv = ConditionVariable.new
+      @wake = Queue.new
+      @thread = nil
+      @pid = nil
       validate_url!
     end
 
     def inert? = @url.nil?
 
     def enabled?(name)
+      ensure_started
       doc = @document
       doc&.dig("Flags", name.to_s, "Enabled") == true
     rescue
@@ -36,16 +45,43 @@ module CruFlags
     end
 
     def snapshot
+      ensure_started
       doc = @document
       doc ? JSON.parse(JSON.generate(doc)) : {}
     rescue
       {}
     end
 
+    # Blocks until the first fetch attempt completes (success or failure) and
+    # returns whether it did within timeout. Immediately false for inert
+    # clients (design doc §3.3, §7).
+    def ready(timeout: nil)
+      return false if inert?
+      ensure_started
+      return on_demand_ready if on_demand? # Task 7
+      @ready_mutex.synchronize do
+        deadline = timeout && Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+        until @attempted
+          remaining = deadline && deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          return false if remaining && remaining <= 0
+          @ready_cv.wait(@ready_mutex, remaining || 1.0)
+          return false if @closed && !@attempted
+        end
+        true
+      end
+    rescue
+      false
+    end
+
     def refresh(force: false)
       return false if inert? || @closed
-      @write_mutex.synchronize do
-        attempt_fetch if force || stale?
+      waited_from = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      @fetch_mutex.synchronize do
+        if force
+          attempt_fetch unless @last_attempt_at && @last_attempt_at >= waited_from
+        elsif stale?
+          attempt_fetch
+        end
         @attempted && @last_attempt_ok
       end
     rescue
@@ -54,10 +90,64 @@ module CruFlags
 
     def close
       @closed = true
+      @wake.push(:stop)
+      @ready_mutex.synchronize { @ready_cv.broadcast }
+      @thread&.join(0.1)
       nil
     end
 
     private
+
+    # Task 7 introduces refresh_mode resolution; on-demand mode has no
+    # poller thread at all (design doc §7.1).
+    def on_demand?
+      false
+    end
+
+    # Lazily arms the background poller on the first enabled?/ready/snapshot
+    # call. A no-op for inert, closed, or on-demand clients. Fork-safe: a PID
+    # change discards the dead parent thread's state so the child re-arms its
+    # own poller on its own next read (design doc §7).
+    def ensure_started
+      return if inert? || @closed || on_demand?
+      return if @thread && Process.pid == @pid
+      @write_mutex.synchronize do
+        return if @closed
+        if @thread && Process.pid != @pid
+          @thread = nil
+          @wake = Queue.new
+        end
+        spawn_poller unless @thread
+      end
+    end
+
+    def spawn_poller
+      @pid = Process.pid
+      @thread = Thread.new do
+        Thread.current.name = "cru-flags-poller"
+        Thread.current.report_on_exception = false
+        until @closed
+          attempt_fetch_coalesced(force: true)
+          signal_ready
+          begin
+            @wake.pop(timeout: @poll_seconds * rand(0.8..1.2))
+          rescue
+            nil
+          end
+        end
+      end
+    end
+
+    def attempt_fetch_coalesced(force:)
+      @fetch_mutex.synchronize do
+        attempt_fetch if force || stale?
+      end
+    end
+
+    def signal_ready
+      return unless @attempted
+      @ready_mutex.synchronize { @ready_cv.broadcast }
+    end
 
     def stale?
       @last_attempt_at.nil? ||

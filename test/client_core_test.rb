@@ -109,6 +109,7 @@ class ClientCoreTest < Minitest::Test
     assert client.inert?
     refute client.enabled?("x")
     client.close
+    assert_equal 1, @errors.size
   end
 
   def test_broken_on_error_handler_is_swallowed
