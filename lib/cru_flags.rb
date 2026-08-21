@@ -3,3 +3,4 @@
 require_relative "cru_flags/version"
 require_relative "cru_flags/errors"
 require_relative "cru_flags/document"
+require_relative "cru_flags/fetcher"
