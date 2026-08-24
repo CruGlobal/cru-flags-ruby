@@ -84,7 +84,15 @@ class FlagService
     socket.write "HTTP/1.1 #{status} X\r\n"
     headers.each { |k, v| socket.write "#{k}: #{v}\r\n" }
     socket.write "Connection: close\r\n"
-    socket.write "Content-Length: #{body ? body.bytesize : 0}\r\n\r\n"
-    socket.write(body) if body
+    if body.respond_to?(:call)
+      # Streaming body: the responder supplies its own Content-Length header
+      # and writes the payload incrementally, so a test can observe how much
+      # of it the client actually consumed before hanging up.
+      socket.write "\r\n"
+      body.call(socket)
+    else
+      socket.write "Content-Length: #{body ? body.bytesize : 0}\r\n\r\n"
+      socket.write(body) if body
+    end
   end
 end

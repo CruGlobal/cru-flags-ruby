@@ -433,9 +433,11 @@ One tick:
    inherit auto-follow from `fetch`/`urllib`). Ruby-first hardening the
    siblings may want to adopt: each redirect hop's merged URI is
    re-validated (http/https scheme, non-empty host) before it is followed,
-   and the response body is capped at `MAX_BODY_BYTES` (1 MiB) before
-   parsing, both failing the tick rather than handing an attacker-controlled
-   value to `Net::HTTP` or `JSON.parse`.
+   and the response body is capped at `MAX_BODY_BYTES` (1 MiB) **as it
+   streams** — read chunk by chunk with a running byte count, abandoning the
+   read (and the connection) the moment the cap is passed — so an oversized
+   or endless body never reaches the heap whole. Both fail the tick rather
+   than handing an attacker-controlled value to `Net::HTTP` or `JSON.parse`.
 3. Outcomes:
 
    | Outcome | Action | Health |

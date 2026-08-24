@@ -157,4 +157,37 @@ class FetcherTest < Minitest::Test
     assert_equal :failed, outcome.kind
     assert_equal :parse, outcome.error.code
   end
+
+  # The 1 MiB cap has to be enforced WHILE reading, not after: a check that
+  # runs on an already-buffered body lets a hostile or broken service push
+  # unbounded bytes into the process before anyone objects. Observable here
+  # because the harness streams the payload and reports how many bytes it
+  # managed to write before the client hung up.
+  def test_oversized_body_aborts_the_read_instead_of_buffering_it
+    chunk = "x" * 64_000
+    declared = CruFlags::Fetcher::MAX_BODY_BYTES * 16
+    written = 0
+    finished = Queue.new
+    writer = lambda do |socket|
+      while written < declared
+        socket.write(chunk)
+        written += chunk.bytesize
+      end
+    rescue SystemCallError, IOError
+      nil # the client hung up mid-stream, which is the whole point
+    ensure
+      finished.push(written)
+    end
+    @service.respond { |_req| [200, {"Content-Length" => declared.to_s}, writer] }
+
+    outcome = fetch(timeout: 10.0)
+    assert_equal :failed, outcome.kind
+    assert_equal :parse, outcome.error.code
+    assert_includes outcome.error.message, "exceeds #{CruFlags::Fetcher::MAX_BODY_BYTES} bytes"
+
+    sent = finished.pop(timeout: 10)
+    refute_nil sent, "the streaming responder never finished"
+    assert_operator sent, :<, declared,
+      "the client read the whole oversized payload instead of aborting at the cap"
+  end
 end
