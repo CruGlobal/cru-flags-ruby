@@ -82,6 +82,11 @@ module CruFlags
       headers["If-None-Match"] = etag if etag
       Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https",
         open_timeout: timeout, read_timeout: timeout, write_timeout: timeout) do |http|
+        # Design doc §8: no retries within a tick — the next tick is the
+        # retry. Net::HTTP's default max_retries of 1 silently re-issues a
+        # failed idempotent GET, doubling both the blocking bound the client
+        # promises and the load a struggling flag service sees.
+        http.max_retries = 0
         http.get(uri.request_uri, headers)
       end
     end

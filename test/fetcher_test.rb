@@ -118,6 +118,18 @@ class FetcherTest < Minitest::Test
     assert_equal :network, outcome.error.code
   end
 
+  def test_a_failed_tick_issues_exactly_one_request
+    # Design doc §8: "No retries within a tick — the next tick is the retry."
+    # Net::HTTP's own max_retries defaults to 1 and silently re-issues a
+    # failed idempotent GET, which both doubles the blocking bound and
+    # doubles the load a struggling flag service sees.
+    @service.respond { |_req| raise IOError, "simulated mid-request failure" }
+    outcome = fetch
+    assert_equal :failed, outcome.kind
+    assert_equal 1, @service.requests.size,
+      "a failed fetch must not be retried inside the same tick"
+  end
+
   def test_oversized_body_is_failed
     # A valid-JSON body that merely exceeds MAX_BODY_BYTES: proves the size
     # cap itself trips the failure, not a coincidental parse error.
