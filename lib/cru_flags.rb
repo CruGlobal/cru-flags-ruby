@@ -32,7 +32,11 @@ module CruFlags
 
     def refresh(force: false) = client.refresh(force:)
 
-    def close = client.close
+    # Nil-safe on the ivar, like reset!: going through the memoizing reader
+    # would BUILD (and validate) a singleton just to close it, leaving a
+    # permanently-closed client memoized — and emitting the invalid-URL
+    # warning at shutdown for an app that never used flags at all.
+    def close = @client&.close
 
     # The read-only Flipper adapter (design doc §5), memoized and bound to
     # the singleton client. `flipper` is required lazily here (not at the
