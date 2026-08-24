@@ -304,7 +304,9 @@ module CruFlags
       return if @url.nil?
       uri = URI(@url.to_s)
       invalid_scheme = !VALID_SCHEMES.include?(uri.scheme)
-      no_host = uri.host.to_s.empty?
+      # hostname, matching the fetcher: the unbracketed form is what actually
+      # gets resolved, so it is what "has a host" must be judged on.
+      no_host = uri.hostname.to_s.empty?
       if invalid_scheme || no_host
         reason = invalid_scheme ? "scheme #{uri.scheme.inspect} is not http(s)" : "has no host"
         @url = nil

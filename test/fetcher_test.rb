@@ -118,6 +118,24 @@ class FetcherTest < Minitest::Test
     assert_equal :network, outcome.error.code
   end
 
+  # URI#host keeps the brackets an IPv6 literal must carry inside a URL
+  # ("[::1]"), and getaddrinfo cannot resolve that — a CRU_FLAGS_URL pointing
+  # at an IPv6 address would fail every tick as a :network error. URI#hostname
+  # is the unbracketed form Net::HTTP wants.
+  def test_ipv6_literal_url_is_fetched_not_a_network_error
+    service = begin
+      FlagService.new(host: "::1").start
+    rescue SocketError, SystemCallError => e
+      skip "IPv6 loopback is not bindable in this environment (#{e.class}: #{e.message})"
+    end
+    service.respond_with(status: 200, body: '{"Version":6,"Flags":{}}')
+    outcome = CruFlags::Fetcher.call(url: service.url, timeout: 2.0)
+    assert_equal :document, outcome.kind, "IPv6 fetch failed: #{outcome.error&.message}"
+    assert_equal 6, outcome.document["Version"]
+  ensure
+    service&.stop
+  end
+
   def test_a_failed_tick_issues_exactly_one_request
     # Design doc §8: "No retries within a tick — the next tick is the retry."
     # Net::HTTP's own max_retries defaults to 1 and silently re-issues a

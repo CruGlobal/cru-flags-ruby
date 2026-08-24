@@ -71,8 +71,8 @@ module CruFlags
     # which would otherwise raise something less legible than a plain :failed
     # :network outcome.
     def validate_redirect_uri!(uri)
-      return if VALID_SCHEMES.include?(uri.scheme) && !uri.host.to_s.empty?
-      raise FetchError.new("flag fetch redirected to an invalid URI (scheme #{uri.scheme.inspect}, host #{uri.host.inspect})",
+      return if VALID_SCHEMES.include?(uri.scheme) && !uri.hostname.to_s.empty?
+      raise FetchError.new("flag fetch redirected to an invalid URI (scheme #{uri.scheme.inspect}, host #{uri.hostname.inspect})",
         code: :network)
     end
 
@@ -80,7 +80,9 @@ module CruFlags
       headers = {"Accept" => "application/json",
                  "User-Agent" => "cru-flags-ruby/#{VERSION}"}
       headers["If-None-Match"] = etag if etag
-      Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https",
+      # hostname, not host: URI#host keeps the brackets an IPv6 literal must
+      # carry inside a URL ("[::1]"), which getaddrinfo cannot resolve.
+      Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == "https",
         open_timeout: timeout, read_timeout: timeout, write_timeout: timeout) do |http|
         # Design doc §8: no retries within a tick — the next tick is the
         # retry. Net::HTTP's default max_retries of 1 silently re-issues a

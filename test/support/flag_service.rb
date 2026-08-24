@@ -11,7 +11,8 @@ class FlagService
   attr_reader :requests
   attr_accessor :delay
 
-  def initialize
+  def initialize(host: "127.0.0.1")
+    @host = host
     @requests = []
     @delay = nil
     @responder = ->(_req) { [404, {}, nil] }
@@ -19,14 +20,19 @@ class FlagService
   end
 
   def start
-    @server = TCPServer.new("127.0.0.1", 0)
+    @server = TCPServer.new(@host, 0)
     @port = @server.addr[1]
     @thread = Thread.new { accept_loop }
     @thread.report_on_exception = false
     self
   end
 
-  def url = "http://127.0.0.1:#{@port}/flags/test/production"
+  def url = "http://#{url_host}:#{@port}/flags/test/production"
+
+  # An IPv6 literal has to be bracketed inside a URL's authority, which is
+  # exactly the shape that makes URI#host (brackets kept) the wrong thing to
+  # hand to Net::HTTP.
+  def url_host = @host.include?(":") ? "[#{@host}]" : @host
 
   def respond_with(status:, body: nil, headers: {})
     @mutex.synchronize { @responder = ->(_req) { [status, headers, body] } }

@@ -421,10 +421,14 @@ One tick:
 1. Build a `Net::HTTP::Get` with `Accept: application/json`, a `User-Agent`
    of `cru-flags-ruby/<version>`, and `If-None-Match: <etag>` when an ETag is
    stored.
-2. One-shot `Net::HTTP.start(host, port, use_ssl:, open_timeout: t,
+2. One-shot `Net::HTTP.start(hostname, port, use_ssl:, open_timeout: t,
    read_timeout: t, write_timeout: t)` — no keep-alive, no connection
-   pooling; the right trade for one request per 30 seconds. **No retries
-   within a tick** — the next tick is the retry. Redirects are followed to a
+   pooling; the right trade for one request per 30 seconds. `URI#hostname`,
+   not `URI#host`: the latter keeps the brackets an IPv6 literal carries in
+   a URL (`[::1]`), which `getaddrinfo` cannot resolve. **No retries
+   within a tick** — the next tick is the retry, and Net::HTTP's own
+   `max_retries` (default 1) is set to 0 explicitly, since its default would
+   silently re-issue the failed GET inside the same tick. Redirects are followed to a
    fixed limit of **3** (Net::HTTP does not follow them itself; the siblings
    inherit auto-follow from `fetch`/`urllib`). Ruby-first hardening the
    siblings may want to adopt: each redirect hop's merged URI is
