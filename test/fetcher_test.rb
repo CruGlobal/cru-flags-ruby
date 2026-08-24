@@ -190,4 +190,38 @@ class FetcherTest < Minitest::Test
     assert_operator sent, :<, declared,
       "the client read the whole oversized payload instead of aborting at the cap"
   end
+
+  # The cap bounds the read for every status, but only a 200 body is the
+  # document, so only a 200 turns the overrun into a size failure. A huge
+  # error body must still report the HTTP status it actually had, and a huge
+  # 404 must still be :missing — otherwise the cap would relabel outcomes
+  # the client makes real decisions on.
+  def test_oversized_non_200_bodies_keep_their_own_outcome
+    {404 => :missing, 500 => :failed}.each do |status, kind|
+      declared = CruFlags::Fetcher::MAX_BODY_BYTES * 4
+      chunk = "x" * 64_000
+      written = 0
+      finished = Queue.new
+      writer = lambda do |socket|
+        while written < declared
+          socket.write(chunk)
+          written += chunk.bytesize
+        end
+      rescue SystemCallError, IOError
+        nil
+      ensure
+        finished.push(written)
+      end
+      @service.respond { |_req| [status, {"Content-Length" => declared.to_s}, writer] }
+
+      outcome = fetch(timeout: 10.0)
+      assert_equal kind, outcome.kind, "HTTP #{status}"
+      assert_equal 500, outcome.error.status if status == 500
+
+      sent = finished.pop(timeout: 10)
+      refute_nil sent, "the streaming responder never finished (HTTP #{status})"
+      assert_operator sent, :<, declared,
+        "the cap must bound the read on HTTP #{status} too, not just on 200"
+    end
+  end
 end

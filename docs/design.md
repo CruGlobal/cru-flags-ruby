@@ -441,10 +441,13 @@ One tick:
    siblings may want to adopt: each redirect hop's merged URI is
    re-validated (http/https scheme, non-empty host) before it is followed,
    and the response body is capped at `MAX_BODY_BYTES` (1 MiB) **as it
-   streams** — read chunk by chunk with a running byte count, abandoning the
-   read (and the connection) the moment the cap is passed — so an oversized
-   or endless body never reaches the heap whole. Both fail the tick rather
-   than handing an attacker-controlled value to `Net::HTTP` or `JSON.parse`.
+   streams** — read chunk by chunk with a running byte count, ending the
+   read the moment the cap is passed — so an oversized or endless body never
+   reaches the heap whole. A `200` that overruns fails the tick (a truncated
+   document must never be parsed); on any other status the body is only ever
+   an excerpt or unused, so the overrun just ends the read and the status's
+   own outcome stands. Both guards fail the tick rather than handing an
+   attacker-controlled value to `Net::HTTP` or `JSON.parse`.
 3. Outcomes:
 
    | Outcome | Action | Health |

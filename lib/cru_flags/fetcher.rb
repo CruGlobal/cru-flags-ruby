@@ -99,18 +99,25 @@ module CruFlags
     end
 
     # Design doc §8's 1 MiB cap, enforced WHILE the body streams in rather
-    # than after Net::HTTP has already buffered it: the read is abandoned —
-    # and, since this unwinds out of Net::HTTP.start, the connection torn
-    # down — the moment the cap is passed, so an oversized or endless body
-    # never reaches the heap whole. A 304 (and any other bodyless response)
-    # yields nothing and comes back as "".
+    # than after Net::HTTP has already buffered it: reading stops the moment
+    # the cap is passed, so an oversized (or endless) body never reaches the
+    # heap whole. A 304 — and any other bodyless response — yields nothing
+    # and comes back as "".
+    #
+    # Only a 200 turns the overrun into the tick's failure: that body IS the
+    # document, and a truncated document must never be parsed. Every other
+    # status uses the body as at most a BODY_EXCERPT-sized error excerpt, or
+    # ignores it entirely, so overrunning there just ends the read rather
+    # than relabeling a legible HTTP outcome as a size error.
     def read_capped_body(response)
       body = +""
       response.read_body do |chunk|
         body << chunk
-        if body.bytesize > MAX_BODY_BYTES
+        next if body.bytesize <= MAX_BODY_BYTES
+        if response.code == "200"
           raise FetchError.new("flag fetch body exceeds #{MAX_BODY_BYTES} bytes", code: :parse)
         end
+        break
       end
       body
     end
