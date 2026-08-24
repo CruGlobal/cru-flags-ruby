@@ -17,8 +17,11 @@ module CruFlags
   @flipper_adapter = nil
 
   class << self
+    # The env read happens inside Client (Client.url_from_env), so the
+    # singleton and a hand-rolled `Client.new` share one normalization
+    # rather than two copies that can drift.
     def client
-      @client || @client_mutex.synchronize { @client ||= Client.new(url: url_from_env) }
+      @client || @client_mutex.synchronize { @client ||= Client.new }
     end
 
     def enabled?(name) = client.enabled?(name)
@@ -51,13 +54,6 @@ module CruFlags
         @client = nil
       end
       @flipper_adapter_mutex.synchronize { @flipper_adapter = nil }
-    end
-
-    private
-
-    def url_from_env
-      value = ENV[ENV_VAR].to_s.strip
-      value.empty? ? nil : value
     end
   end
 end
