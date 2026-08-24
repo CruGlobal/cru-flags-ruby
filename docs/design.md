@@ -317,8 +317,15 @@ that, in an initializer:
   so the value is always already set when we look. Instead the Railtie sets
   `config.flipper.strict = false` only when `ENV["FLIPPER_STRICT"].nil?` AND
   the current value equals Flipper's own computed default for this Rails env —
-  i.e. only when we can prove nobody chose it. `FLIPPER_STRICT=warn` (or any
-  app-set value) is always honored. Rationale: local dev and brand-new
+  i.e. only when we cannot tell that anybody chose it. `FLIPPER_STRICT` is
+  always honored when set. An app-set `config.flipper.strict` is honored too,
+  **except when it happens to equal the environment's own flipper default**
+  (`:warn` in development, `false` elsewhere) — that case is
+  indistinguishable from nobody setting it, and is quieted. Reading the value
+  is the only signal available; distinguishing it would mean hooking the
+  assignment itself, which is not worth the coupling for a case whose
+  observable effect is the value the app asked for anyway in every
+  environment but development. Rationale: local dev and brand-new
   projects legitimately have no flag document, and `Flipper.add` is never
   called by app code (flags are born in the service), so dev-mode `:warn`
   would fire on every check.
@@ -510,11 +517,19 @@ re-running the suite on 3.2 / 3.3 / 3.4.
   path derivation turns the hyphenated name into `lib/cru/flags/version.rb`
   and would silently bump a file that doesn't exist).
 - `required_ruby_version = ">= 3.2"` — the fleet floor.
-- Runtime dependency: **`flipper` (`~> 1.4`) only.** The client core uses
-  stdlib exclusively; the Flipper adapter and Railtie are the gem's reason to
-  have its one dependency, and every consumer already carries it. (If a
-  flipper-less consumer ever appears, splitting a zero-dep core gem out is a
-  follow-up, not a v0 concern.)
+- Runtime dependencies: **`flipper` (`~> 1.4`), plus a floor on the stdlib
+  gem `json` (`>= 2.4`).** The client core uses stdlib exclusively; the
+  Flipper adapter and Railtie are the gem's reason to have `flipper`, and
+  every consumer already carries it. (If a flipper-less consumer ever
+  appears, splitting a zero-dep core gem out is a follow-up, not a v0
+  concern.) The `json` entry is a **version floor on a default gem, not a
+  new dependency** — but it must not be removed: `JSON.parse(..., freeze:
+  true)` is what makes the published document deep-frozen, and json below
+  2.4 **silently ignores** `freeze:` rather than erroring. On an older json
+  the snapshot would quietly become mutable and §6's frozen-snapshot
+  invariant — the whole reason readers can dig into the live document
+  without a lock — would be false with no symptom until something mutated
+  it.
 - Publishing via **RubyGems Trusted Publishing** (OIDC) from
   `.github/workflows/release.yml` — the PyPI pattern; no API key in the
   repo. First publish uses RubyGems' pending-publisher flow since the gem
