@@ -117,6 +117,7 @@ class RailtieLogicTest < Minitest::Test
       # Where config/application.rb and environment files run: before every
       # Railtie initializer.
       CruFlags.fallback_store = nil if ENV["OPT_OUT_IN_CONFIG"]
+      CruFlags.fallback_store = -> { Rails.cache } if ENV["PROC_IN_CONFIG"]
     end
 
     Rails.application.initialize!
@@ -137,6 +138,11 @@ class RailtieLogicTest < Minitest::Test
 
   def test_opting_out_in_app_config_survives_the_railtie
     assert_equal "nil", boot_fallback_store("OPT_OUT_IN_CONFIG" => "1")
+  end
+
+  # Rails.cache is still nil here, so only the Proc form can name it.
+  def test_a_proc_set_in_app_config_resolves_to_rails_cache
+    assert_equal "rails_cache", boot_fallback_store("PROC_IN_CONFIG" => "1")
   end
 
   def test_an_app_initializer_can_opt_out_of_the_fallback_store

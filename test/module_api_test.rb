@@ -77,6 +77,20 @@ class ModuleApiTest < Minitest::Test
     CruFlags.default_fallback_store = nil
   end
 
+  def test_the_module_setter_takes_a_proc_like_client_new_does
+    store = Class.new {
+      attr_reader :data
+      def initialize = @data = {}
+      def read(key) = @data[key]
+      def write(key, value, **) = @data[key] = value
+    }.new
+    CruFlags.fallback_store = -> { store }
+    assert_same store, CruFlags.fallback_store
+    ENV["CRU_FLAGS_URL"] = @service.url
+    assert CruFlags.ready(timeout: 2.0)
+    assert_includes store.data.fetch("cru_flags/v1/#{@service.url}"), "pilot"
+  end
+
   def test_a_singleton_built_before_the_assignment_still_follows_it
     store = Class.new {
       attr_reader :writes

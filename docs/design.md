@@ -143,7 +143,8 @@ CruFlags::Client.new(
   fallback_store: nil  # nil -> no fallback copy; a store, or a Proc returning one (§6.1)
 )
 
-CruFlags.fallback_store = Rails.cache  # the singleton's store; beats the Railtie default
+CruFlags.fallback_store = nil              # opt out; set anywhere in app config
+CruFlags.fallback_store = -> { Rails.cache }  # a store, or a Proc returning one
 ```
 
 ### 3.1 `CruFlags` module methods
@@ -155,7 +156,13 @@ read, no socket, no thread (§7). The singleton is constructed on first use,
 so tests and dotenv can set `CRU_FLAGS_URL` any time before the first lookup.
 The singleton resolves `CruFlags.fallback_store` on every use, not once at
 construction (§6.1): an explicit assignment (nil included) if there was one,
-else `CruFlags.default_fallback_store`, the Railtie's `-> { Rails.cache }`.
+else `CruFlags.default_fallback_store`, the Railtie's `-> { Rails.cache }`. A
+Proc is called on each use. That matters in `config/application.rb` and
+environment files, where `Rails.cache` is still nil (Bootstrap has not built
+it yet): a bare `Rails.cache` there assigns nil and turns the fallback off,
+while `-> { Rails.cache }` works anywhere. `default_fallback_store=` belongs
+to the Railtie, which overwrites it unconditionally; apps use
+`fallback_store=`.
 
 ### 3.2 `enabled?(name) -> bool`
 
@@ -180,7 +187,7 @@ will be. In on-demand mode `ready` *performs* the first attempt like any
 other read, so `timeout:` is unused there — the call is bounded by the fetch
 timeouts (up to ~2s by default) regardless of a smaller `timeout:` value,
 exactly as the python client documents. With a `fallback_store`, the attempt
-also includes one store call (§6.1), bounded by the store's own timeouts.
+also includes at most one store call (§6.1), bounded by the store's own timeouts.
 Never raises.
 
 ### 3.4 `snapshot -> Hash`
@@ -437,9 +444,10 @@ removes rows by age (`max_age`, two weeks by default) and evicts oldest
 first, and its upsert does not refresh a row's age. While the service is up,
 the every-tick rewrite puts the copy back within one interval; during an
 outage nothing can. A per-container store (`FileStore`, `MemoryStore`) only
-helps a restart inside the same container. During an image build
-`CRU_FLAGS_URL` is unset (it is injected at runtime), so the client is inert
-and writes nothing into the image's `tmp/cache`.
+helps a restart inside the same container. This assumes `CRU_FLAGS_URL` is
+unset during image builds (the fleet injects it at runtime), which leaves the
+client inert; a build that sets it and reads a flag would bake a copy into
+the image's `tmp/cache` under `FileStore`.
 
 Trade-off accepted: the copy is only as fresh as the last process that
 reached the service. That is the same promise a warm process makes during an
@@ -593,9 +601,11 @@ Plus, ported from the siblings and ararat:
   store ignored; an `ActiveSupport::Cache::MemoryStore` with a default TTL
   keeps the copy past it; a raising store read still reports the outage;
   on-demand mode restores too; an assignment beats the default in either
-  order, even after the singleton exists; and three real Rails boots:
-  zero-config uses `Rails.cache`, and a `nil` set in app config (before the
-  Railtie) or in an initializer (after it) wins.
+  order, even after the singleton exists; a Proc works through both
+  `Client.new` and the module setter; and four real Rails boots: zero-config
+  uses `Rails.cache`, `-> { Rails.cache }` set in app config resolves to it,
+  and a `nil` set in app config (before the Railtie) or in an initializer
+  (after it) wins.
 - `test/verify_live.rb`, opt-in and networked, against the real public
   endpoint (document parses; second conditional fetch is 304). Not in CI.
 
