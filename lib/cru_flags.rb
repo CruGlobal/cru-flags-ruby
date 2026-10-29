@@ -15,13 +15,31 @@ module CruFlags
   @client = nil
   @flipper_adapter_mutex = Mutex.new
   @flipper_adapter = nil
+  @fallback_store = nil
+  @fallback_store_set = false
+  @default_fallback_store = nil
 
   class << self
+    # The singleton's cross-process fallback store (design doc §6.1). Any
+    # assignment, nil included, beats default_fallback_store (the Railtie's
+    # Rails.cache) whenever it happens: the singleton resolves the store on
+    # every use, not once at construction.
+    attr_writer :default_fallback_store
+
+    def fallback_store=(store)
+      @fallback_store_set = true
+      @fallback_store = store
+    end
+
+    def fallback_store
+      @fallback_store_set ? @fallback_store : @default_fallback_store&.call
+    end
+
     # The env read happens inside Client (Client.url_from_env), so the
     # singleton and a hand-rolled `Client.new` share one normalization
     # rather than two copies that can drift.
     def client
-      @client || @client_mutex.synchronize { @client ||= Client.new }
+      @client || @client_mutex.synchronize { @client ||= Client.new(fallback_store: -> { fallback_store }) }
     end
 
     def enabled?(name) = client.enabled?(name)
@@ -51,12 +69,15 @@ module CruFlags
     end
 
     # Test hook, not public API: closes and discards the singleton so the
-    # next call re-reads the environment.
+    # next call re-reads the environment, and forgets any fallback_store
+    # assignment.
     def reset!
       @client_mutex.synchronize do
         @client&.close
         @client = nil
       end
+      @fallback_store_set = false
+      @fallback_store = nil
       @flipper_adapter_mutex.synchronize { @flipper_adapter = nil }
     end
   end
