@@ -1,5 +1,8 @@
 # cru-flags
 
+> [!IMPORTANT]
+> **This client now lives in [CruGlobal/cru-flags](https://github.com/CruGlobal/cru-flags)**, with the Node, Python, Ruby and Go clients, and this repository is archived. The package keeps its name, so apps need no change; versions 0.3.0 and later are released from there. Current docs: [docs/ruby/README.md](https://github.com/CruGlobal/cru-flags/blob/main/docs/ruby/README.md).
+
 > **Status: AI-generated, not actively maintained by a human team.** This
 > library was authored primarily by an AI assistant against the specification
 > in [docs/design.md](docs/design.md), reviewed and operated by the Cru Rails
